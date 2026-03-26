@@ -1,18 +1,25 @@
+# 02_pickleball_courts_scrape.R
+# Purpose: Scrape and clean pickleball court counts by state from Places2Play.
 
 library(rvest)
 library(tidyverse)
 library(readr)
 
 base_url <- "https://www.places2play.org"
+processed_dir <- "data/processed"
 
-# state list
+if (!dir.exists(processed_dir)) dir.create(processed_dir, recursive = TRUE)
+
+# ----------------------------
+# Build state list
+# ----------------------------
 by_state <- read_html(paste0(base_url, "/bystate"))
 
-state_links <- by_state |>
-  html_elements("a") |>
-  html_attr("href") |>
-  na.omit() |>
-  unique() |>
+state_links <- by_state %>%
+  html_elements("a") %>%
+  html_attr("href") %>%
+  na.omit() %>%
+  unique() %>%
   keep(~ str_detect(.x, "^/state/"))
 
 states_tbl <- tibble(
@@ -20,9 +27,11 @@ states_tbl <- tibble(
   slug = str_remove(state_links, "^/state/")
 )
 
-# helper: parse one HTML page worth of In/Out pairs
+# ----------------------------
+# Helper: extract indoor/outdoor pairs from one page
+# ----------------------------
 extract_pairs <- function(page) {
-  txt <- page |> html_text2()
+  txt <- page %>% html_text2()
   
   m <- str_match_all(txt, "In:\\s*(\\d+)\\s+Out:\\s*(\\d+)")[[1]]
   
@@ -36,9 +45,12 @@ extract_pairs <- function(page) {
   )
 }
 
-# helper: read total results from header like "Results 0 - 50 of 839"
+# ----------------------------
+# Helper: read total results from page header
+# Example: "Results 0 - 50 of 839"
+# ----------------------------
 extract_total_places <- function(page) {
-  txt <- page |> html_text2()
+  txt <- page %>% html_text2()
   
   m <- str_match(txt, "Results\\s+\\d+\\s*-\\s*\\d+\\s+of\\s+(\\d+)")
   total <- suppressWarnings(as.integer(m[, 2]))
@@ -46,28 +58,29 @@ extract_total_places <- function(page) {
   if (is.na(total)) 0L else total
 }
 
+# ----------------------------
+# Scrape one state
+# ----------------------------
 scrape_state <- function(url, slug, pause = 0.5) {
   message("Scraping: ", slug)
   
   first_page <- read_html(url)
-  
   total_places <- extract_total_places(first_page)
   
-  # if no results
+  state_name <- str_to_title(str_replace_all(slug, "-", " "))
+  
   if (total_places == 0) {
     return(tibble(
-      State = str_to_title(str_replace_all(slug, "-", " ")),
-      Places = 0L,
-      Indoor = 0L,
-      Outdoor = 0L,
-      `Total Courts` = 0L
+      state_name = state_name,
+      places = 0L,
+      indoor = 0L,
+      outdoor = 0L,
+      total_courts = 0L
     ))
   }
   
-  # Places2Play appears to show 50 results per page
   offsets <- seq(0, total_places - 1, by = 50)
   
-  # try common pagination patterns; keep the one that works for the site version
   page_urls <- if (length(offsets) == 1) {
     url
   } else {
@@ -81,21 +94,27 @@ scrape_state <- function(url, slug, pause = 0.5) {
   })
   
   tibble(
-    State = str_to_title(str_replace_all(slug, "-", " ")),
-    Places = total_places,
-    Indoor = sum(all_pairs$indoor, na.rm = TRUE),
-    Outdoor = sum(all_pairs$outdoor, na.rm = TRUE),
-    `Total Courts` = sum(all_pairs$indoor + all_pairs$outdoor, na.rm = TRUE)
+    state_name = state_name,
+    places = total_places,
+    indoor = sum(all_pairs$indoor, na.rm = TRUE),
+    outdoor = sum(all_pairs$outdoor, na.rm = TRUE),
+    total_courts = sum(all_pairs$indoor + all_pairs$outdoor, na.rm = TRUE)
   )
 }
 
+# ----------------------------
+# Scrape all states
+# ----------------------------
 courts_tbl <- pmap_dfr(
   list(states_tbl$url, states_tbl$slug),
   scrape_state
 )
 
+# ----------------------------
+# Add state abbreviations
+# ----------------------------
 abbr_tbl <- tibble(
-  State = c(
+  state_name = c(
     state.name,
     "District Of Columbia",
     "American Samoa",
@@ -111,25 +130,34 @@ abbr_tbl <- tibble(
   )
 )
 
-final_tbl <- courts_tbl |>
-  left_join(abbr_tbl, by = "State") |>
+pickleball_courts_clean <- courts_tbl %>%
+  left_join(abbr_tbl, by = "state_name") %>%
   mutate(
-    State = case_when(
-      State == "District Of Columbia" ~ "District of Columbia",
-      TRUE ~ State
+    state_name = case_when(
+      state_name == "District Of Columbia" ~ "District of Columbia",
+      TRUE ~ state_name
     )
-  ) |>
-  arrange(State)
+  ) %>%
+  arrange(state_name)
 
-print(final_tbl, n = Inf)
+print(pickleball_courts_clean, n = Inf)
 
-summarise(
-  final_tbl,
-  places = sum(Places),
-  indoor = sum(Indoor),
-  outdoor = sum(Outdoor),
-  total = sum(`Total Courts`)
+pickleball_totals <- pickleball_courts_clean %>%
+  summarise(
+    places = sum(places, na.rm = TRUE),
+    indoor = sum(indoor, na.rm = TRUE),
+    outdoor = sum(outdoor, na.rm = TRUE),
+    total_courts = sum(total_courts, na.rm = TRUE)
+  )
+
+print(pickleball_totals)
+
+# ----------------------------
+# Save cleaned output
+# ----------------------------
+write_csv(
+  pickleball_courts_clean,
+  file.path(processed_dir, "pickleball_courts_clean.csv")
 )
 
-#Optional: Save final table
-write_csv(final_tbl, "data/processed/pickleball_places2play_by_state.csv")
+message("Pickleball scrape and cleaning complete.")
