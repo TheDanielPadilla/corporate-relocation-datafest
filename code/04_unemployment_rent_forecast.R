@@ -83,12 +83,13 @@ price_ts <- price %>%
 # Candidate states
 # ----------------------------
 candidate_states <- c("Georgia", "Texas", "Florida", "North Carolina", "Tennessee")
+candidate_state_abbr <- c("GA", "TX", "FL", "NC", "TN")
 
 # ----------------------------
 # Rent series: average by state
 # ----------------------------
 state_rent <- price_ts %>%
-  filter(state %in% c(candidate_states, "California")) %>%
+  filter(state %in% c(candidate_state_abbr, "CA")) %>%
   group_by(date, state) %>%
   summarise(
     avg_overall_rent = mean(overall_rent, na.rm = TRUE),
@@ -96,15 +97,15 @@ state_rent <- price_ts %>%
   )
 
 ga_rent <- state_rent %>%
-  filter(state == "Georgia") %>%
+  filter(state == "GA") %>%
   arrange(date)
 
 ca_rent <- state_rent %>%
-  filter(state == "California") %>%
+  filter(state == "CA") %>%
   arrange(date)
 
 candidate_avg_rent <- state_rent %>%
-  filter(state %in% candidate_states) %>%
+  filter(state %in% candidate_state_abbr) %>%
   group_by(date) %>%
   summarise(
     avg_overall_rent = mean(avg_overall_rent, na.rm = TRUE),
